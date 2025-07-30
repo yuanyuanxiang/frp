@@ -120,7 +120,16 @@ func handleTermSignal(svr *client.Service) {
 	svr.GracefulClose(500 * time.Millisecond)
 }
 
+// RunClient is exported for DLL usage, allowing external control via context
+func RunClient(ctx context.Context, cfgFilePath string) error {
+	return runClientWithContext(ctx, cfgFilePath, security.NewUnsafeFeatures(nil))
+}
+
 func runClient(cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) error {
+	return runClientWithContext(context.Background(), cfgFilePath, unsafeFeatures)
+}
+
+func runClientWithContext(ctx context.Context, cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) error {
 	// Load configuration
 	result, err := config.LoadClientConfigResult(cfgFilePath, strictConfigMode)
 	if err != nil {
@@ -137,11 +146,11 @@ func runClient(cfgFilePath string, unsafeFeatures *security.UnsafeFeatures) erro
 		}
 	}
 
-	return runClientWithAggregator(result, unsafeFeatures, cfgFilePath)
+	return runClientWithAggregatorContext(ctx, result, unsafeFeatures, cfgFilePath)
 }
 
-// runClientWithAggregator runs the client using the internal source aggregator.
-func runClientWithAggregator(result *config.ClientConfigLoadResult, unsafeFeatures *security.UnsafeFeatures, cfgFilePath string) error {
+// runClientWithAggregatorContext runs the client using the internal source aggregator with context support.
+func runClientWithAggregatorContext(ctx context.Context, result *config.ClientConfigLoadResult, unsafeFeatures *security.UnsafeFeatures, cfgFilePath string) error {
 	configSource := source.NewConfigSource()
 	if err := configSource.ReplaceAll(result.Proxies, result.Visitors); err != nil {
 		return fmt.Errorf("failed to set config source: %w", err)
@@ -186,10 +195,11 @@ func runClientWithAggregator(result *config.ClientConfigLoadResult, unsafeFeatur
 		return err
 	}
 
-	return startServiceWithAggregator(result.Common, aggregator, unsafeFeatures, cfgFilePath)
+	return startServiceWithAggregatorContext(ctx, result.Common, aggregator, unsafeFeatures, cfgFilePath)
 }
 
-func startServiceWithAggregator(
+func startServiceWithAggregatorContext(
+	ctx context.Context,
 	cfg *v1.ClientCommonConfig,
 	aggregator *source.Aggregator,
 	unsafeFeatures *security.UnsafeFeatures,
@@ -198,7 +208,7 @@ func startServiceWithAggregator(
 	log.InitLogger(cfg.Log.To, cfg.Log.Level, int(cfg.Log.MaxDays), cfg.Log.DisablePrintColor)
 
 	if cfgFile != "" {
-		log.Infof("start frpc service for config file [%s] with aggregated configuration", cfgFile)
+		log.Infof("start frpc service for config file [%s]", cfgFile)
 		defer log.Infof("frpc service for config file [%s] stopped", cfgFile)
 	}
 	svr, err := client.NewService(client.ServiceOptions{
@@ -215,5 +225,5 @@ func startServiceWithAggregator(
 	if shouldGracefulClose {
 		go handleTermSignal(svr)
 	}
-	return svr.Run(context.Background())
+	return svr.Run(ctx)
 }
