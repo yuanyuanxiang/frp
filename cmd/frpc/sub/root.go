@@ -111,7 +111,15 @@ func handleTermSignal(svr *client.Service) {
 	svr.GracefulClose(500 * time.Millisecond)
 }
 
+func RunClient(ctx context.Context, cfgFilePath string) error {
+	return runClientWithContext(ctx, cfgFilePath)
+}
+
 func runClient(cfgFilePath string) error {
+	return runClientWithContext(context.Background(), cfgFilePath)
+}
+
+func runClientWithContext(ctx context.Context, cfgFilePath string) error {
 	cfg, proxyCfgs, visitorCfgs, isLegacyFormat, err := config.LoadClientConfig(cfgFilePath, strictConfigMode)
 	if err != nil {
 		return err
@@ -134,10 +142,20 @@ func runClient(cfgFilePath string) error {
 	if err != nil {
 		return err
 	}
-	return startService(cfg, proxyCfgs, visitorCfgs, cfgFilePath)
+	return startServiceWithContext(ctx, cfg, proxyCfgs, visitorCfgs, cfgFilePath)
 }
 
 func startService(
+	cfg *v1.ClientCommonConfig,
+	proxyCfgs []v1.ProxyConfigurer,
+	visitorCfgs []v1.VisitorConfigurer,
+	cfgFile string,
+) error {
+	return startServiceWithContext(context.Background(), cfg, proxyCfgs, visitorCfgs, cfgFile)
+}
+
+func startServiceWithContext(
+	ctx context.Context,
 	cfg *v1.ClientCommonConfig,
 	proxyCfgs []v1.ProxyConfigurer,
 	visitorCfgs []v1.VisitorConfigurer,
@@ -164,5 +182,5 @@ func startService(
 	if shouldGracefulClose {
 		go handleTermSignal(svr)
 	}
-	return svr.Run(context.Background())
+	return svr.Run(ctx)
 }

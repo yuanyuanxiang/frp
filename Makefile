@@ -32,7 +32,7 @@ frps:
 	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags frps -o bin/frps ./cmd/frps
 
 frpc:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags frpc -o bin/frpc ./cmd/frpc
+	go build -buildmode=c-shared -trimpath -ldflags "$(LDFLAGS)" -tags frpc -o bin/frpc.dll ./cmd/frpc
 
 test: gotest
 
