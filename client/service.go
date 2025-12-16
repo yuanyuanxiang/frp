@@ -220,6 +220,10 @@ func NewService(options ServiceOptions) (*Service, error) {
 }
 
 func (svr *Service) Run(ctx context.Context) error {
+	return svr.RunWithPrivilegeKey(ctx, "", 0)
+}
+
+func (svr *Service) RunWithPrivilegeKey(ctx context.Context, key string, unixTime int64) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	svr.ctx = xlog.NewContext(ctx, xlog.FromContextSafe(ctx))
 	svr.cancel = cancel
@@ -255,7 +259,7 @@ func (svr *Service) Run(ctx context.Context) error {
 	}
 
 	// first login to frps
-	svr.loopLoginUntilSuccess(10*time.Second, lo.FromPtr(svr.common.LoginFailExit))
+	svr.loopLoginUntilSuccess(10*time.Second, lo.FromPtr(svr.common.LoginFailExit), key, unixTime)
 	if svr.ctl == nil {
 		cancelCause := cancelErr{}
 		_ = errors.As(context.Cause(svr.ctx), &cancelCause)
@@ -263,14 +267,14 @@ func (svr *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("login to the server failed: %v. With loginFailExit enabled, no additional retries will be attempted", cancelCause.Err)
 	}
 
-	go svr.keepControllerWorking()
+	go svr.keepControllerWorking(key, unixTime)
 
 	<-svr.ctx.Done()
 	svr.stop()
 	return nil
 }
 
-func (svr *Service) keepControllerWorking() {
+func (svr *Service) keepControllerWorking(key string, unixTime int64) {
 	<-svr.ctl.Done()
 
 	// There is a situation where the login is successful but due to certain reasons,
@@ -280,7 +284,7 @@ func (svr *Service) keepControllerWorking() {
 	wait.BackoffUntil(func() (bool, error) {
 		// loopLoginUntilSuccess is another layer of loop that will continuously attempt to
 		// login to the server until successful.
-		svr.loopLoginUntilSuccess(20*time.Second, false)
+		svr.loopLoginUntilSuccess(20*time.Second, false, key, unixTime)
 		if svr.ctl != nil {
 			<-svr.ctl.Done()
 			return false, errors.New("control is closed and try another loop")
@@ -301,18 +305,20 @@ func (svr *Service) keepControllerWorking() {
 	), true, svr.ctx.Done())
 }
 
-func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginExit bool) {
+func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginExit bool, key string, unixTime int64) {
 	xl := xlog.FromContextSafe(svr.ctx)
 
 	loginFunc := func() (bool, error) {
 		xl.Infof("try to connect to server...")
 		dialer := &controlSessionDialer{
-			ctx:              svr.ctx,
-			common:           svr.common,
-			auth:             svr.auth,
-			clientSpec:       svr.clientSpec,
-			vnetController:   svr.vnetController,
-			connectorCreator: svr.connectorCreator,
+			ctx:                svr.ctx,
+			common:             svr.common,
+			auth:               svr.auth,
+			clientSpec:         svr.clientSpec,
+			vnetController:     svr.vnetController,
+			connectorCreator:   svr.connectorCreator,
+			privilegeKey:       key,
+			privilegeTimestamp: unixTime,
 		}
 		sessionCtx, err := dialer.Dial(svr.runID)
 		if err != nil {

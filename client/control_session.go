@@ -44,6 +44,10 @@ type controlSessionDialer struct {
 	vnetController *vnet.Controller
 
 	connectorCreator func(context.Context, *v1.ClientCommonConfig) Connector
+
+	// DLL API: pre-computed privilege key and its timestamp; zero values mean use normal auth flow.
+	privilegeKey       string
+	privilegeTimestamp int64
 }
 
 func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, error) {
@@ -104,24 +108,33 @@ func (d *controlSessionDialer) Dial(previousRunID string) (*SessionContext, erro
 
 func (d *controlSessionDialer) buildLoginMsg(previousRunID string) (*msg.Login, error) {
 	hostname, _ := os.Hostname()
+	ts := time.Now().Unix()
+	if d.privilegeTimestamp != 0 {
+		ts = d.privilegeTimestamp
+	}
 	loginMsg := &msg.Login{
-		Arch:      runtime.GOARCH,
-		Os:        runtime.GOOS,
-		Hostname:  hostname,
-		PoolCount: d.common.Transport.PoolCount,
-		User:      d.common.User,
-		ClientID:  d.common.ClientID,
-		Version:   version.Full(),
-		Timestamp: time.Now().Unix(),
-		RunID:     previousRunID,
-		Metas:     d.common.Metadatas,
+		Arch:         runtime.GOARCH,
+		Os:           runtime.GOOS,
+		Hostname:     hostname,
+		PoolCount:    d.common.Transport.PoolCount,
+		User:         d.common.User,
+		ClientID:     d.common.ClientID,
+		Version:      version.Full(),
+		Timestamp:    ts,
+		RunID:        previousRunID,
+		Metas:        d.common.Metadatas,
+		PrivilegeKey: d.privilegeKey,
 	}
 	if d.clientSpec != nil {
 		loginMsg.ClientSpec = *d.clientSpec
 	}
 
-	if err := d.auth.Setter.SetLogin(loginMsg); err != nil {
-		return nil, err
+	// When a pre-computed privilege key is provided (DLL API), skip the normal auth setter
+	// so it does not overwrite the caller-supplied key.
+	if d.privilegeKey == "" {
+		if err := d.auth.Setter.SetLogin(loginMsg); err != nil {
+			return nil, err
+		}
 	}
 	return loginMsg, nil
 }
