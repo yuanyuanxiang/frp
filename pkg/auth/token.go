@@ -37,6 +37,9 @@ func NewTokenAuth(additionalAuthScopes []v1.AuthScope, token string) *TokenAuthS
 }
 
 func (auth *TokenAuthSetterVerifier) SetLogin(loginMsg *msg.Login) error {
+	if loginMsg.PrivilegeKey != "" {
+		return nil
+	}
 	loginMsg.PrivilegeKey = util.GetAuthKey(auth.token, loginMsg.Timestamp)
 	return nil
 }
