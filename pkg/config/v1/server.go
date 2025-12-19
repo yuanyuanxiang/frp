@@ -99,6 +99,8 @@ type ServerConfig struct {
 	AllowPorts []types.PortsRange `json:"allowPorts,omitempty"`
 
 	HTTPPlugins []HTTPPluginOptions `json:"httpPlugins,omitempty"`
+
+	Fallbacks []FallbackConfig `json:"fallbacks,omitempty"`
 }
 
 func (c *ServerConfig) Complete() error {

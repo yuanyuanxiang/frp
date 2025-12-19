@@ -48,6 +48,13 @@ func NewTCPProxy(baseProxy *BaseProxy) Proxy {
 
 func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
 	xl := pxy.xl
+
+	// ===== 新增：通知 fallback 停止 =====
+	if pxy.rc.FallbackManager != nil {
+		pxy.rc.FallbackManager.OnProxyOnline(pxy.cfg.RemotePort)
+	}
+	// ====================================
+
 	if pxy.cfg.LoadBalancer.Group != "" {
 		l, realBindPort, errRet := pxy.rc.TCPGroupCtl.Listen(pxy.name, pxy.cfg.LoadBalancer.Group, pxy.cfg.LoadBalancer.GroupKey,
 			pxy.serverCfg.ProxyBindAddr, pxy.cfg.RemotePort)
@@ -93,4 +100,10 @@ func (pxy *TCPProxy) Close() {
 	if pxy.cfg.LoadBalancer.Group == "" {
 		pxy.rc.TCPPortManager.Release(pxy.realBindPort)
 	}
+
+	// ===== 新增：通知 fallback 启动 =====
+	if pxy.rc.FallbackManager != nil {
+		pxy.rc.FallbackManager.OnProxyOffline(pxy.realBindPort)
+	}
+	// ====================================
 }
