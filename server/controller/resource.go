@@ -19,6 +19,7 @@ import (
 	plugin "github.com/fatedier/frp/pkg/plugin/server"
 	"github.com/fatedier/frp/pkg/util/tcpmux"
 	"github.com/fatedier/frp/pkg/util/vhost"
+	"github.com/fatedier/frp/server/fallback"
 	"github.com/fatedier/frp/server/group"
 	"github.com/fatedier/frp/server/ports"
 	"github.com/fatedier/frp/server/visitor"
@@ -61,6 +62,9 @@ type ResourceController struct {
 
 	// All server manager plugin
 	PluginManager *plugin.Manager
+
+	// FallbackManager 管理端口 fallback
+	FallbackManager *fallback.Manager
 }
 
 func (rc *ResourceController) Close() error {

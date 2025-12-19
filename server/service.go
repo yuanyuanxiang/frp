@@ -50,6 +50,7 @@ import (
 	"github.com/fatedier/frp/pkg/util/vhost"
 	"github.com/fatedier/frp/pkg/util/xlog"
 	"github.com/fatedier/frp/server/controller"
+	"github.com/fatedier/frp/server/fallback"
 	"github.com/fatedier/frp/server/group"
 	"github.com/fatedier/frp/server/metrics"
 	"github.com/fatedier/frp/server/ports"
@@ -179,6 +180,21 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		cfg:               cfg,
 		ctx:               context.Background(),
 	}
+
+	// ===== 新增：初始化 FallbackManager =====
+	svr.rc.FallbackManager = fallback.NewManager()
+
+	// 注册配置的 fallback
+	log.Infof("fallback config count: %d", len(cfg.Fallbacks))
+	for _, fb := range cfg.Fallbacks {
+		log.Infof("fallback config: remotePort=%d, fallbackAddr=%s", fb.RemotePort, fb.FallbackAddr)
+		svr.rc.FallbackManager.Register(fb.RemotePort, cfg.ProxyBindAddr, fb.FallbackAddr)
+	}
+
+	// 启动所有 fallback（此时没有 frpc 连接）
+	svr.rc.FallbackManager.StartAll()
+	// ========================================
+
 	if webServer != nil {
 		webServer.RouteRegister(svr.registerRouteHandlers)
 	}
@@ -399,6 +415,12 @@ func (svr *Service) Run(ctx context.Context) {
 }
 
 func (svr *Service) Close() error {
+	// ===== 新增 =====
+	if svr.rc.FallbackManager != nil {
+		svr.rc.FallbackManager.Close()
+	}
+	// ================
+
 	if svr.kcpListener != nil {
 		svr.kcpListener.Close()
 	}

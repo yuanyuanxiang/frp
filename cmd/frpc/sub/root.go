@@ -342,22 +342,22 @@ func StartServiceWithCommand(
 
 // ProxyParams defines parameters for creating a proxy configuration
 type ProxyParams struct {
-	Name      string   // Proxy name
-	Type      string   // Proxy type: tcp, udp, http, https, stcp, xtcp, sudp, tcpmux
-	LocalIP   string   // Local IP address (default: 127.0.0.1)
-	LocalPort int      // Local port
+	Name      string // Proxy name
+	Type      string // Proxy type: tcp, udp, http, https, stcp, xtcp, sudp, tcpmux
+	LocalIP   string // Local IP address (default: 127.0.0.1)
+	LocalPort int    // Local port
 
 	// For TCP/UDP proxies
-	RemotePort int      // Remote port
+	RemotePort int // Remote port
 
 	// For HTTP/HTTPS/TCPMUX proxies
 	CustomDomains []string // Custom domains
 	SubDomain     string   // Sub domain
 
 	// Optional settings
-	UseEncryption    bool   // Enable encryption
-	UseCompression   bool   // Enable compression
-	BandwidthLimit   string // Bandwidth limit (e.g., "1MB")
+	UseEncryption  bool   // Enable encryption
+	UseCompression bool   // Enable compression
+	BandwidthLimit string // Bandwidth limit (e.g., "1MB")
 
 	// For STCP/XTCP/SUDP proxies
 	SecretKey  string   // Secret key for P2P proxies
