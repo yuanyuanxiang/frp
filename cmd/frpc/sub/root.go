@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 
 	"github.com/fatedier/frp/client"
@@ -33,6 +34,7 @@ import (
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/config/v1/validation"
 	"github.com/fatedier/frp/pkg/featuregate"
+	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/util/log"
 	"github.com/fatedier/frp/pkg/util/version"
 )
@@ -240,6 +242,9 @@ func StartServiceWithCommand(
 			Method: v1.AuthMethodToken,
 			Token:  "placeholder", // Placeholder, actual auth uses privilegeKey
 		},
+		Transport: v1.ClientTransportConfig{
+			TCPMux: lo.ToPtr(true), // Enable TCPMux (default)
+		},
 	}
 
 	// Complete configuration with defaults
@@ -273,15 +278,17 @@ func StartServiceWithCommand(
 	// Initialize logger
 	log.InitLogger(cfg.Log.To, cfg.Log.Level, int(cfg.Log.MaxDays), cfg.Log.DisablePrintColor)
 
-	log.Infof("start frpc service with %d proxies using pre-calculated credentials", len(proxyCfgs))
-	log.Infof("privilegeKey: %s, timestamp: %d", privilegeKey, timestamp)
-	defer log.Infof("frpc service stopped")
-
 	// Create service
+	// Note: We use ClientSpec with Type="ssh-tunnel" to disable connection encryption
+	// because we don't have the original token (only pre-calculated privilegeKey).
+	// The connection encryption uses token as the key, which we don't have.
 	svr, err := client.NewService(client.ServiceOptions{
 		Common:      cfg,
 		ProxyCfgs:   proxyCfgs,
 		VisitorCfgs: nil, // Visitors not supported in this simplified API
+		ClientSpec: &msg.ClientSpec{
+			Type: "ssh-tunnel", // This disables connection encryption (connEncrypted = false)
+		},
 	})
 	if err != nil {
 		return err
