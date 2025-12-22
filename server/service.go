@@ -477,7 +477,9 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 		if err == nil {
 			m = &retContent.Login
 			controlConn := acceptedConn.conn
-			if !internal {
+			// ssh-tunnel clients use a pre-calculated privilegeKey and don't have the original
+			// token, so we cannot derive the same encryption key on the client side.
+			if !internal && m.ClientSpec.Type != "ssh-tunnel" {
 				var controlRW io.ReadWriter
 				controlRW, err = acceptedConn.newControlReadWriter(conn, svr.auth.EncryptionKey())
 				if err == nil {
