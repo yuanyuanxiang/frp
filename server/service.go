@@ -614,7 +614,9 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login, inter
 	}
 
 	// TODO(fatedier): use SessionContext
-	ctl, err := NewControl(ctx, svr.rc, svr.pxyManager, svr.pluginManager, authVerifier, ctlConn, !internal, loginMsg, svr.cfg)
+	// Disable encryption for ssh-tunnel clients (they use pre-calculated privilegeKey without original token)
+	ctlConnEncrypted := !internal && loginMsg.ClientSpec.Type != "ssh-tunnel"
+	ctl, err := NewControl(ctx, svr.rc, svr.pxyManager, svr.pluginManager, authVerifier, ctlConn, ctlConnEncrypted, loginMsg, svr.cfg)
 	if err != nil {
 		xl.Warnf("create new controller error: %v", err)
 		// don't return detailed errors to client
