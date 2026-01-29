@@ -288,6 +288,10 @@ func StartServiceWithCommand(
 		Transport: v1.ClientTransportConfig{
 			TCPMux: lo.ToPtr(true), // Enable TCPMux (default)
 		},
+		// Disable LoginFailExit so that loopLoginUntilSuccess will retry on first failure
+		// instead of immediately giving up. This is important for DLL usage where
+		// Go runtime's network stack may not be fully ready on the first call.
+		LoginFailExit: lo.ToPtr(false),
 	}
 
 	// Complete configuration with defaults
@@ -384,6 +388,10 @@ func StartServiceWithToken(
 		Transport: v1.ClientTransportConfig{
 			TCPMux: lo.ToPtr(true),
 		},
+		// Disable LoginFailExit so that loopLoginUntilSuccess will retry on first failure
+		// instead of immediately giving up. This is important for DLL usage where
+		// transient network issues should not cause immediate exit.
+		LoginFailExit: lo.ToPtr(false),
 	}
 
 	// Complete configuration with defaults
