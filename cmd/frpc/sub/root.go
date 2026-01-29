@@ -236,14 +236,14 @@ func startServiceWithAggregatorContext(
 //
 // This function supports two usage modes:
 //
-// 1. Traditional mode (pass original token):
-//    Simply pass timestamp=0, and it will use current time automatically.
-//    privilegeKey, timestamp := CalculatePrivilegeKey(token, 0)
-//    StartServiceWithCommand(ctx, privilegeKey, timestamp, ...)
+//  1. Traditional mode (pass original token):
+//     Simply pass timestamp=0, and it will use current time automatically.
+//     privilegeKey, timestamp := CalculatePrivilegeKey(token, 0)
+//     StartServiceWithCommand(ctx, privilegeKey, timestamp, ...)
 //
-// 2. Secure mode (pre-calculated credentials):
-//    Server calculates and distributes privilegeKey+timestamp to clients.
-//    Client uses them directly without knowing the original token.
+//  2. Secure mode (pre-calculated credentials):
+//     Server calculates and distributes privilegeKey+timestamp to clients.
+//     Client uses them directly without knowing the original token.
 //
 // Parameters:
 //   - privilegeKey: Pre-calculated authentication key (MD5(token + timestamp))
@@ -345,6 +345,95 @@ func StartServiceWithCommand(
 	// Use RunWithPrivilegeKey to bypass token-based auth calculation
 	// and use the pre-calculated privilegeKey and timestamp directly
 	return svr.RunWithPrivilegeKey(ctx, privilegeKey, timestamp)
+}
+
+// StartServiceWithToken starts frpc service with a token (password) and single proxy configuration.
+// Unlike StartServiceWithCommand which requires a pre-calculated privilegeKey,
+// this function takes the original token and handles authentication internally.
+//
+// Since the original token is available, this function uses the standard connection
+// flow with encryption support (no need for ssh-tunnel workaround).
+//
+// Parameters:
+//   - token: The FRP authentication token (password)
+//   - serverAddr: FRP server address
+//   - serverPort: FRP server port
+//   - user: User name (optional, can be empty)
+//   - proxies: List of proxy configurations
+//
+// Example:
+//
+//	err := StartServiceWithToken(ctx, "my_secret_token", "frp.example.com", 7000, "", proxies)
+func StartServiceWithToken(
+	ctx context.Context,
+	token string,
+	serverAddr string,
+	serverPort int,
+	user string,
+	proxies []ProxyParams,
+) error {
+	// Initialize ClientCommonConfig with the actual token
+	cfg := &v1.ClientCommonConfig{
+		ServerAddr: serverAddr,
+		ServerPort: serverPort,
+		User:       user,
+		Auth: v1.AuthClientConfig{
+			Method: v1.AuthMethodToken,
+			Token:  token,
+		},
+		Transport: v1.ClientTransportConfig{
+			TCPMux: lo.ToPtr(true),
+		},
+	}
+
+	// Complete configuration with defaults
+	if err := cfg.Complete(); err != nil {
+		return fmt.Errorf("complete config error: %v", err)
+	}
+
+	// Validate common configuration
+	if _, err := validation.ValidateClientCommonConfig(cfg); err != nil {
+		return fmt.Errorf("invalid common config: %v", err)
+	}
+
+	// Build proxy configurations
+	var proxyCfgs []v1.ProxyConfigurer
+	for _, p := range proxies {
+		pc, err := createProxyConfigurer(p)
+		if err != nil {
+			return fmt.Errorf("create proxy [%s] error: %v", p.Name, err)
+		}
+		proxyCfgs = append(proxyCfgs, pc)
+	}
+
+	// Complete all proxy configurations
+	for _, pc := range proxyCfgs {
+		pc.Complete(cfg.User)
+		if err := validation.ValidateProxyConfigurerForClient(pc); err != nil {
+			return fmt.Errorf("invalid proxy config [%s]: %v", pc.GetBaseConfig().Name, err)
+		}
+	}
+
+	// Initialize logger
+	log.InitLogger(cfg.Log.To, cfg.Log.Level, int(cfg.Log.MaxDays), cfg.Log.DisablePrintColor)
+
+	// Create service - no need for ssh-tunnel workaround since we have the actual token
+	svr, err := client.NewService(client.ServiceOptions{
+		Common:      cfg,
+		ProxyCfgs:   proxyCfgs,
+		VisitorCfgs: nil,
+	})
+	if err != nil {
+		return err
+	}
+
+	shouldGracefulClose := cfg.Transport.Protocol == "kcp" || cfg.Transport.Protocol == "quic"
+	if shouldGracefulClose {
+		go handleTermSignal(svr)
+	}
+
+	// Use standard Run since we have the actual token for authentication
+	return svr.Run(ctx)
 }
 
 // ProxyParams defines parameters for creating a proxy configuration
