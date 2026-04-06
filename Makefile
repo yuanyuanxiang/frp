@@ -35,7 +35,7 @@ vet:
 	go vet -tags "$(NOWEB_TAG)" ./...
 
 frps:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/frps ./cmd/frps
+	go build -buildmode=c-shared -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/frps.dll ./cmd/frps
 
 frpc:
 	go build -buildmode=c-shared -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/frpc.dll ./cmd/frpc
@@ -79,10 +79,14 @@ e2e-compatibility-last-frps:
 	rm -r ./lastversion
 
 alltest: vet gotest e2e
-	
+
 clean:
 	rm -f ./bin/frpc
+	rm -f ./bin/frpc.dll
+	rm -f ./bin/frpc.h
 	rm -f ./bin/frps
+	rm -f ./bin/frps.dll
+	rm -f ./bin/frps.h
 	rm -rf ./lastversion
 	rm -rf ./.cache
 	rm -rf ./.compat

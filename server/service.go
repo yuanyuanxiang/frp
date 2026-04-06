@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fatedier/golib/crypto"
@@ -80,6 +81,9 @@ type Service struct {
 	// Dispatch connections to different handlers listen on same port
 	muxer *mux.Mux
 
+	// The underlying raw tcp listener (used for closing)
+	tcpListener net.Listener
+
 	// Accept connections from client
 	listener net.Listener
 
@@ -132,6 +136,9 @@ type Service struct {
 	ctx context.Context
 	// call cancel to stop service
 	cancel context.CancelFunc
+
+	// ensure Close() is only called once
+	closeOnce sync.Once
 }
 
 func NewService(cfg *v1.ServerConfig) (*Service, error) {
@@ -254,6 +261,7 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		return nil, fmt.Errorf("create server listener error, %v", err)
 	}
 
+	svr.tcpListener = ln // 保存原始 listener 用于关闭
 	svr.muxer = mux.NewMux(ln)
 	svr.muxer.SetKeepAlive(time.Duration(cfg.Transport.TCPKeepAlive) * time.Second)
 	go func() {
@@ -405,9 +413,14 @@ func (svr *Service) Run(ctx context.Context) {
 		go svr.sshTunnelGateway.Run()
 	}
 
+	// 监听 context 取消，关闭所有 listener 以使 Accept() 返回
+	go func() {
+		<-svr.ctx.Done()
+		svr.Close()
+	}()
+
 	svr.HandleListener(svr.listener, false)
 
-	<-svr.ctx.Done()
 	// service context may not be canceled by svr.Close(), we should call it here to release resources
 	if svr.listener != nil {
 		svr.Close()
@@ -415,42 +428,46 @@ func (svr *Service) Run(ctx context.Context) {
 }
 
 func (svr *Service) Close() error {
-	// ===== 新增 =====
-	if svr.rc.FallbackManager != nil {
-		svr.rc.FallbackManager.Close()
-	}
-	// ================
+	svr.closeOnce.Do(func() {
+		if svr.rc.FallbackManager != nil {
+			svr.rc.FallbackManager.Close()
+		}
 
-	if svr.kcpListener != nil {
-		svr.kcpListener.Close()
-	}
-	if svr.quicListener != nil {
-		svr.quicListener.Close()
-	}
-	if svr.websocketListener != nil {
-		svr.websocketListener.Close()
-	}
-	if svr.tlsListener != nil {
-		svr.tlsListener.Close()
-	}
-	if svr.sshTunnelListener != nil {
-		svr.sshTunnelListener.Close()
-	}
-	if svr.listener != nil {
-		svr.listener.Close()
-	}
-	if svr.webServer != nil {
-		svr.webServer.Close()
-	}
-	if svr.sshTunnelGateway != nil {
-		svr.sshTunnelGateway.Close()
-	}
-	svr.rc.Close()
-	svr.muxer.Close()
-	svr.ctlManager.Close()
-	if svr.cancel != nil {
-		svr.cancel()
-	}
+		if svr.kcpListener != nil {
+			svr.kcpListener.Close()
+		}
+		if svr.quicListener != nil {
+			svr.quicListener.Close()
+		}
+		if svr.websocketListener != nil {
+			svr.websocketListener.Close()
+		}
+		if svr.tlsListener != nil {
+			svr.tlsListener.Close()
+		}
+		if svr.sshTunnelListener != nil {
+			svr.sshTunnelListener.Close()
+		}
+		// 先关闭原始 tcp listener，这样 muxer 和所有 mux listener 的 Accept() 才会返回
+		if svr.tcpListener != nil {
+			svr.tcpListener.Close()
+		}
+		svr.muxer.Close()
+		if svr.listener != nil {
+			svr.listener.Close()
+		}
+		if svr.webServer != nil {
+			svr.webServer.Close()
+		}
+		if svr.sshTunnelGateway != nil {
+			svr.sshTunnelGateway.Close()
+		}
+		svr.rc.Close()
+		svr.ctlManager.Close()
+		if svr.cancel != nil {
+			svr.cancel()
+		}
+	})
 	return nil
 }
 
@@ -679,60 +696,84 @@ func (ac *acceptedConnection) handleClientHello(conn net.Conn, wireConn *wire.Co
 // TODO(fatedier): Pass some parameters of listener/connection through context to avoid passing too many parameters.
 func (svr *Service) HandleListener(l net.Listener, internal bool) {
 	// Listen for incoming connections from client.
+	type acceptResult struct {
+		conn net.Conn
+		err  error
+	}
+
 	for {
-		c, err := l.Accept()
-		if err != nil {
-			log.Warnf("listener for incoming connections from client closed")
+		// 使用 goroutine + select 以便在 context 取消时能退出
+		// 这是为了绕过 golib mux.DefaultListener 的 bug：
+		// 其 Close() 方法不会关闭内部 channel，导致 Accept() 永远阻塞
+		resultCh := make(chan acceptResult, 1)
+		go func() {
+			c, err := l.Accept()
+			resultCh <- acceptResult{conn: c, err: err}
+		}()
+
+		select {
+		case <-svr.ctx.Done():
+			// context 取消时退出，会留下一个阻塞的 goroutine，但程序即将退出，可接受
 			return
-		}
-		// inject xlog object into net.Conn context
-		xl := xlog.New()
-		ctx := context.Background()
-
-		c = netpkg.NewContextConn(xlog.NewContext(ctx, xl), c)
-
-		if !internal {
-			log.Tracef("start check TLS connection...")
-			originConn := c
-			forceTLS := svr.cfg.Transport.TLS.Force
-			var isTLS, custom bool
-			c, isTLS, custom, err = netpkg.CheckAndEnableTLSServerConnWithTimeout(c, svr.tlsConfig, forceTLS, connReadTimeout)
-			if err != nil {
-				log.Warnf("checkAndEnableTLSServerConnWithTimeout error: %v", err)
-				originConn.Close()
-				continue
+		case result := <-resultCh:
+			if result.err != nil {
+				log.Warnf("listener for incoming connections from client closed, err: %v", result.err)
+				return
 			}
-			log.Tracef("check TLS connection success, isTLS: %v custom: %v internal: %v", isTLS, custom, internal)
-		}
+			c := result.conn
 
-		// Start a new goroutine to handle connection.
-		go func(ctx context.Context, frpConn net.Conn) {
-			if lo.FromPtr(svr.cfg.Transport.TCPMux) && !internal {
-				fmuxCfg := fmux.DefaultConfig()
-				fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.Transport.TCPMuxKeepaliveInterval) * time.Second
-				// Use trace level for yamux logs
-				fmuxCfg.LogOutput = xlog.NewTraceWriter(xlog.FromContextSafe(ctx))
-				fmuxCfg.MaxStreamWindowSize = 6 * 1024 * 1024
-				session, err := fmux.Server(frpConn, fmuxCfg)
+			// inject xlog object into net.Conn context
+			xl := xlog.New()
+			ctx := context.Background()
+
+			c = netpkg.NewContextConn(xlog.NewContext(ctx, xl), c)
+
+			if !internal {
+				log.Tracef("start check TLS connection...")
+				originConn := c
+				forceTLS := svr.cfg.Transport.TLS.Force
+				var isTLS, custom bool
+				c, isTLS, custom, err := netpkg.CheckAndEnableTLSServerConnWithTimeout(c, svr.tlsConfig, forceTLS, connReadTimeout)
 				if err != nil {
-					log.Warnf("failed to create mux connection: %v", err)
-					frpConn.Close()
-					return
+					log.Warnf("checkAndEnableTLSServerConnWithTimeout error: %v", err)
+					originConn.Close()
+					continue
 				}
+				log.Tracef("check TLS connection success, isTLS: %v custom: %v internal: %v", isTLS, custom, internal)
 
-				for {
-					stream, err := session.AcceptStream()
-					if err != nil {
-						log.Debugf("accept new mux stream error: %v", err)
-						session.Close()
-						return
+				// Start a new goroutine to handle connection.
+				go func(ctx context.Context, frpConn net.Conn) {
+					if lo.FromPtr(svr.cfg.Transport.TCPMux) {
+						fmuxCfg := fmux.DefaultConfig()
+						fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.Transport.TCPMuxKeepaliveInterval) * time.Second
+						// Use trace level for yamux logs
+						fmuxCfg.LogOutput = xlog.NewTraceWriter(xlog.FromContextSafe(ctx))
+						fmuxCfg.MaxStreamWindowSize = 6 * 1024 * 1024
+						session, err := fmux.Server(frpConn, fmuxCfg)
+						if err != nil {
+							log.Warnf("failed to create mux connection: %v", err)
+							frpConn.Close()
+							return
+						}
+
+						for {
+							stream, err := session.AcceptStream()
+							if err != nil {
+								log.Debugf("accept new mux stream error: %v", err)
+								session.Close()
+								return
+							}
+							go svr.handleConnection(ctx, stream, internal)
+						}
+					} else {
+						svr.handleConnection(ctx, frpConn, internal)
 					}
-					go svr.handleConnection(ctx, stream, internal)
-				}
+				}(ctx, c)
 			} else {
-				svr.handleConnection(ctx, frpConn, internal)
+				// internal connection - no TLS check needed
+				go svr.handleConnection(ctx, c, internal)
 			}
-		}(ctx, c)
+		}
 	}
 }
 

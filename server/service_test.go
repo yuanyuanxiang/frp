@@ -15,12 +15,16 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/util/log"
 )
 
 func TestWriteWithDeadlineTimesOutAndClearsDeadline(t *testing.T) {
@@ -59,5 +63,40 @@ func TestWriteWithDeadlineTimesOutAndClearsDeadline(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for write after deadline reset")
+	}
+}
+
+func TestServiceRun_ContextCancel(t *testing.T) {
+	log.InitLogger("console", "info", 3, true)
+
+	cfg := &v1.ServerConfig{
+		BindAddr: "127.0.0.1",
+		BindPort: 17000,
+	}
+	cfg.Complete()
+
+	svr, err := NewService(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create service: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		svr.Run(ctx)
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	t.Log("Service started, cancelling context...")
+
+	cancel()
+
+	select {
+	case <-done:
+		t.Log("Service exited successfully after context cancel")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timeout: service did not exit within 3 seconds after context cancel")
 	}
 }
