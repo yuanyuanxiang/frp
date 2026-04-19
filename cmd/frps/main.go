@@ -292,7 +292,8 @@ func runServerFromFile(ctx context.Context, cfgFile string) error {
 		return err
 	}
 
-	warning, err := validation.ValidateServerConfig(svrCfg)
+	validator := validation.NewConfigValidator(nil)
+	warning, err := validator.ValidateServerConfig(svrCfg)
 	if warning != nil {
 		log.Warnf("WARNING: %v", warning)
 	}
@@ -336,7 +337,8 @@ func startServerWithParams(
 	}
 
 	// Validate configuration
-	warning, err := validation.ValidateServerConfig(cfg)
+	validator := validation.NewConfigValidator(nil)
+	warning, err := validator.ValidateServerConfig(cfg)
 	if warning != nil {
 		log.Warnf("WARNING: %v", warning)
 	}

@@ -300,7 +300,8 @@ func StartServiceWithCommand(
 	}
 
 	// Validate common configuration
-	if _, err := validation.ValidateClientCommonConfig(cfg); err != nil {
+	validator := validation.NewConfigValidator(nil)
+	if _, err := validator.ValidateClientCommonConfig(cfg); err != nil {
 		return fmt.Errorf("invalid common config: %v", err)
 	}
 
@@ -400,7 +401,8 @@ func StartServiceWithToken(
 	}
 
 	// Validate common configuration
-	if _, err := validation.ValidateClientCommonConfig(cfg); err != nil {
+	validator := validation.NewConfigValidator(nil)
+	if _, err := validator.ValidateClientCommonConfig(cfg); err != nil {
 		return fmt.Errorf("invalid common config: %v", err)
 	}
 
