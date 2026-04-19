@@ -201,6 +201,17 @@ func runClientWithAggregatorContext(ctx context.Context, result *config.ClientCo
 	return startServiceWithAggregatorContext(ctx, result.Common, aggregator, unsafeFeatures, cfgFilePath)
 }
 
+// startServiceWithAggregator is a convenience wrapper for startServiceWithAggregatorContext
+// that uses context.Background()
+func startServiceWithAggregator(
+	cfg *v1.ClientCommonConfig,
+	aggregator *source.Aggregator,
+	unsafeFeatures *security.UnsafeFeatures,
+	cfgFile string,
+) error {
+	return startServiceWithAggregatorContext(context.Background(), cfg, aggregator, unsafeFeatures, cfgFile)
+}
+
 func startServiceWithAggregatorContext(
 	ctx context.Context,
 	cfg *v1.ClientCommonConfig,
@@ -316,8 +327,8 @@ func StartServiceWithCommand(
 	}
 
 	// Complete all proxy configurations
+	proxyCfgs = config.CompleteProxyConfigurers(proxyCfgs)
 	for _, pc := range proxyCfgs {
-		pc.Complete(cfg.User)
 		if err := validation.ValidateProxyConfigurerForClient(pc); err != nil {
 			return fmt.Errorf("invalid proxy config [%s]: %v", pc.GetBaseConfig().Name, err)
 		}
@@ -326,14 +337,20 @@ func StartServiceWithCommand(
 	// Initialize logger
 	log.InitLogger(cfg.Log.To, cfg.Log.Level, int(cfg.Log.MaxDays), cfg.Log.DisablePrintColor)
 
+	// Create aggregator for the proxy configurations
+	configSource := source.NewConfigSource()
+	if err := configSource.ReplaceAll(proxyCfgs, nil); err != nil {
+		return fmt.Errorf("failed to set config source: %w", err)
+	}
+	aggregator := source.NewAggregator(configSource)
+
 	// Create service
 	// Note: We use ClientSpec with Type="ssh-tunnel" to disable connection encryption
 	// because we don't have the original token (only pre-calculated privilegeKey).
 	// The connection encryption uses token as the key, which we don't have.
 	svr, err := client.NewService(client.ServiceOptions{
-		Common:      cfg,
-		ProxyCfgs:   proxyCfgs,
-		VisitorCfgs: nil, // Visitors not supported in this simplified API
+		Common:                 cfg,
+		ConfigSourceAggregator: aggregator,
 		ClientSpec: &msg.ClientSpec{
 			Type: "ssh-tunnel", // This disables connection encryption (connEncrypted = false)
 		},
@@ -417,8 +434,8 @@ func StartServiceWithToken(
 	}
 
 	// Complete all proxy configurations
+	proxyCfgs = config.CompleteProxyConfigurers(proxyCfgs)
 	for _, pc := range proxyCfgs {
-		pc.Complete(cfg.User)
 		if err := validation.ValidateProxyConfigurerForClient(pc); err != nil {
 			return fmt.Errorf("invalid proxy config [%s]: %v", pc.GetBaseConfig().Name, err)
 		}
@@ -427,11 +444,17 @@ func StartServiceWithToken(
 	// Initialize logger
 	log.InitLogger(cfg.Log.To, cfg.Log.Level, int(cfg.Log.MaxDays), cfg.Log.DisablePrintColor)
 
+	// Create aggregator for the proxy configurations
+	configSource := source.NewConfigSource()
+	if err := configSource.ReplaceAll(proxyCfgs, nil); err != nil {
+		return fmt.Errorf("failed to set config source: %w", err)
+	}
+	aggregator := source.NewAggregator(configSource)
+
 	// Create service - no need for ssh-tunnel workaround since we have the actual token
 	svr, err := client.NewService(client.ServiceOptions{
-		Common:      cfg,
-		ProxyCfgs:   proxyCfgs,
-		VisitorCfgs: nil,
+		Common:                 cfg,
+		ConfigSourceAggregator: aggregator,
 	})
 	if err != nil {
 		return err
